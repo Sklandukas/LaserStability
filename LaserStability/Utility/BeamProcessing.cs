@@ -27,7 +27,7 @@ public class BeamProcessing
         _cameraPixelPeriod = 3.25f;
     }
 
-    public static unsafe Bitmap Start(Bitmap bitmap)
+    public static unsafe (Bitmap, float, float) Start(Bitmap bitmap)
     {
         int bytesPerPixel = Image.GetPixelFormatSize(bitmap.PixelFormat) / 8;
         int heightInPixels = bitmap.Height;
@@ -117,7 +117,7 @@ public class BeamProcessing
         Console.WriteLine("y position: " + centerPoint.y);
 
         bitmap.UnlockBits(bitmapData);
-        return bitmap;
+        return (bitmap, centerPoint.x, centerPoint.y);
     }
 
     private static unsafe long[] GetHistogram(byte* ptrFirstPixel, int heightInPixels, int widthInBytes, int bytesPerPixel)

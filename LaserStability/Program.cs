@@ -17,8 +17,11 @@ class Program
             Bitmap bmp = new Bitmap(path);
             Console.WriteLine("BMP: " + bmp);
 
-            BeamProcessing.Start(bmp);
+            var res = BeamProcessing.Start(bmp);
+
+            Console.WriteLine("x: " + res.Item2);
+            Console.WriteLine("y: " + res.Item3);
 
         }
     }
-}
+} 
