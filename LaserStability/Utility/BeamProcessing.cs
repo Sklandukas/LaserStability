@@ -1,23 +1,214 @@
+using System;
 using System.Drawing;
 using System.Drawing.Imaging;
-
+using System.Threading;
+using System.Threading.Tasks;
+namespace LaserStability.Utility;
 public class BeamProcessing
 {
     private readonly float _cameraPixelPeriod;
+    private static bool _backgroundVisible = false;
+    private static int previousBackgroundLevel = 0;
+
+    private static long pixelIntensitySum = 0;
+    private static long numberOfBrightPixels = 0;
+    private static int[] width;
+    private static int[] height;
+    private static int maxWidthValue = 0;
+
+    private static long[] heightConvolution;
+    private static long[] widthConvolution;
+    private const int ACTIVE_PIXEL_CHANNEL = 1;
+
+    private static (float x, float y) centerPoint;
 
     public BeamProcessing()
     {
         _cameraPixelPeriod = 3.25f;
     }
 
-    public Bitmap Start(Bitmap bitmap)
-    { 
-        var bitmapData = bitmap.LockBits(
+    public static unsafe Bitmap Start(Bitmap bitmap)
+    {
+        int bytesPerPixel = Image.GetPixelFormatSize(bitmap.PixelFormat) / 8;
+        int heightInPixels = bitmap.Height;
+        int widthInPixels = bitmap.Width;
+        int widthInBytes = widthInPixels * bytesPerPixel;
+
+        int measurementRangeX1 = 0;
+        int measurementRangeX2 = heightInPixels;
+        int measurementRangeY1 = 0;
+        int measurementRangeY2 = widthInBytes;
+
+        width = new int[widthInPixels];
+        height = new int[heightInPixels];
+        heightConvolution = new long[heightInPixels];
+        widthConvolution = new long[widthInPixels];
+
+        BitmapData bitmapData = bitmap.LockBits(
             new Rectangle(0, 0, bitmap.Width, bitmap.Height),
             ImageLockMode.ReadWrite,
             bitmap.PixelFormat);
 
+        byte* ptrFirstPixel = (byte*)bitmapData.Scan0;
+
+        long[] histogram = GetHistogram(ptrFirstPixel, heightInPixels, widthInBytes, bytesPerPixel);
+
+        Parallel.For(measurementRangeX1, measurementRangeX2, y =>
+        {
+            const int INTENSITY_THRESHOLD = 100;
+            int localPixelIntensitySum = 0;
+            int localNumberOfBrightPixels = 0;
+            int maxPixelValueInWidth = 0;
+            int[] localWidth = new int[widthInPixels];
+            int[] localHeight = new int[heightInPixels];
+
+            try
+            {
+                byte* currentLine = ptrFirstPixel + y * bitmapData.Stride;
+
+                for (int x = measurementRangeY1; x < measurementRangeY2; x += bytesPerPixel)
+                {
+                    int pixelValue = currentLine[x];
+                    if (_backgroundVisible)
+                        pixelValue = RemoveBackgroundLevelFromPixel(pixelValue, previousBackgroundLevel);
+
+                    if (pixelValue > INTENSITY_THRESHOLD)
+                    {
+                        localPixelIntensitySum += pixelValue;
+                        localNumberOfBrightPixels++;
+                    }
+
+                    int pixelIndex = x / bytesPerPixel;
+                    localWidth[pixelIndex] += pixelValue;
+
+                    if (localWidth[pixelIndex] > maxPixelValueInWidth)
+                        maxPixelValueInWidth = localWidth[pixelIndex];
+
+                    localHeight[y] += pixelValue;
+                }
+
+                Interlocked.Add(ref pixelIntensitySum, localPixelIntensitySum);
+                Interlocked.Add(ref numberOfBrightPixels, localNumberOfBrightPixels);
+
+                for (int i = 0; i < localWidth.Length; i++)
+                    Interlocked.Add(ref width[i], localWidth[i]);
+
+                if (maxPixelValueInWidth > maxWidthValue)
+                    Interlocked.Exchange(ref maxWidthValue, maxPixelValueInWidth);
+
+                Interlocked.Add(ref height[y], localHeight[y]);
+            }
+            catch (Exception e)
+            {
+                Console.WriteLine(e);
+            }
+        });
+
+        Calculate2DConvolution(ref heightConvolution, ref widthConvolution, height, width,
+            measurementRangeX1, measurementRangeX2, measurementRangeY1, measurementRangeY2, ACTIVE_PIXEL_CHANNEL);
+
+        int centerH = CalculateCenterH(measurementRangeX1, measurementRangeX2, heightConvolution);
+        centerPoint.y = CalculateCenterPointY(centerH, heightConvolution, measurementRangeX2);
+
+        int centerW = CalculateCenterW(measurementRangeY1, measurementRangeY2, widthConvolution, ACTIVE_PIXEL_CHANNEL);
+        centerPoint.x = CalculateCenterPointX(centerW, widthConvolution, measurementRangeY2, ACTIVE_PIXEL_CHANNEL);
+
+        Console.WriteLine("x position: " + centerPoint.x);
+        Console.WriteLine("y position: " + centerPoint.y);
+
+        bitmap.UnlockBits(bitmapData);
         return bitmap;
     }
 
-}
+    private static unsafe long[] GetHistogram(byte* ptrFirstPixel, int heightInPixels, int widthInBytes, int bytesPerPixel)
+    {
+        var histogram = new long[256];
+
+        Parallel.For(0, heightInPixels, y =>
+        {
+            byte* currentLine = ptrFirstPixel + y * widthInBytes;
+            for (int x = 0; x < widthInBytes; x += bytesPerPixel)
+            {
+                int value = currentLine[x];
+                if (value is > 0 and < 255)
+                {
+                    Interlocked.Increment(ref histogram[value]);
+                }
+            }
+        });
+
+        return histogram;
+    }
+
+    private static int RemoveBackgroundLevelFromPixel(int pixelValue, int backgroundLevel)
+    {
+        return Math.Max(0, pixelValue - backgroundLevel);
+    }
+
+    public static double FindBackground(double[] histogram)
+    {
+        double[] histogramIntegral = new double[histogram.Length];
+        histogramIntegral[0] = histogram[0];
+
+        for (int i = 1; i < histogram.Length; i++)
+        {
+            histogramIntegral[i] = histogramIntegral[i - 1] + histogram[i];
+        }
+
+        double halfIntegral = histogramIntegral[histogramIntegral.Length - 1] / 2;
+
+        for (int k = 0; k < histogram.Length; k++)
+        {
+            if (histogramIntegral[k] > halfIntegral)
+                return k;
+        }
+
+        return 0;
+    }
+
+    private static int CalculateCenterH(int measurementRangeX1, int measurementRangeX2, long[] heightConvolution)
+    {
+        for (int i = measurementRangeX1; i < measurementRangeX2; i++)
+        {
+            if (heightConvolution[measurementRangeX2 - 1] < 2 * heightConvolution[i])
+                return i - 1;
+        }
+        return 1;
+    }
+
+    private static int CalculateCenterW(int measurementRangeY1, int measurementRangeY2, long[] widthConvolution, int activePixelChannel)
+    {
+        for (int i = measurementRangeY1 / activePixelChannel; i < measurementRangeY2 / activePixelChannel; i++)
+        {
+            if (widthConvolution[measurementRangeY2 / activePixelChannel - 1] >= 2 * widthConvolution[i])
+                continue;
+            return i - 1;
+        }
+        return 1;
+    }
+
+    private static float CalculateCenterPointY(int centerH, long[] heightConvolution, int measurementRangeX2)
+    {
+        return centerH + (heightConvolution[measurementRangeX2 - 1] / 2 - heightConvolution[centerH]) /
+            (float)(heightConvolution[centerH] - heightConvolution[centerH - 1]);
+    }
+
+    private static float CalculateCenterPointX(int centerW, long[] widthConvolution, int measurementRangeY2,
+        int activePixelChannel)
+    {
+        return centerW +
+               (widthConvolution[measurementRangeY2 / activePixelChannel - 1] / 2 - widthConvolution[centerW]) /
+               (float)(widthConvolution[centerW] - widthConvolution[centerW - 1]);
+    }
+
+    private static void Calculate2DConvolution(ref long[] heightConv, ref long[] widthConv,
+        int[] heightArr, int[] widthArr,
+        int x1, int x2, int y1, int y2, int pixelChannel)
+    {
+        for (int i = x1 + 1; i < x2; i++)
+            heightConv[i] = heightConv[i - 1] + heightArr[i];
+
+        for (int i = y1 / pixelChannel + 1; i < y2 / pixelChannel; i++)
+            widthConv[i] = widthConv[i - 1] + widthArr[i];
+    }
+} 

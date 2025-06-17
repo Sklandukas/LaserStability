@@ -1,6 +1,7 @@
 ﻿using System.Reflection;
 using System.Runtime.InteropServices;
 using LaserStability.Helpers;
+using LaserStability.Utility;
 using System.Drawing;  
 
 class Program
@@ -15,6 +16,8 @@ class Program
             Console.WriteLine("Path: " + path);
             Bitmap bmp = new Bitmap(path);
             Console.WriteLine("BMP: " + bmp);
+
+            BeamProcessing.Start(bmp);
 
         }
     }
