@@ -1,8 +1,5 @@
-using System;
 using System.Drawing;
 using System.Drawing.Imaging;
-using System.Threading;
-using System.Threading.Tasks;
 namespace LaserStability.Utility;
 public class BeamProcessing
 {
@@ -27,8 +24,22 @@ public class BeamProcessing
         _cameraPixelPeriod = 3.25f;
     }
 
-    public static unsafe (Bitmap, float, float) Start(Bitmap bitmap)
+    public static unsafe (Bitmap, float, float) Start(Bitmap inputBitmap)
     {
+        Bitmap bitmap;
+        if (inputBitmap.PixelFormat == PixelFormat.Format8bppIndexed)
+        {
+            bitmap = new Bitmap(inputBitmap.Width, inputBitmap.Height, PixelFormat.Format24bppRgb);
+            using (Graphics gr = Graphics.FromImage(bitmap))
+            {
+                gr.DrawImage(inputBitmap, new Rectangle(0, 0, bitmap.Width, bitmap.Height));
+            }
+        }
+        else
+        {
+            bitmap = (Bitmap)inputBitmap.Clone();
+        }
+
         int bytesPerPixel = Image.GetPixelFormatSize(bitmap.PixelFormat) / 8;
         int heightInPixels = bitmap.Height;
         int widthInPixels = bitmap.Width;
@@ -113,10 +124,8 @@ public class BeamProcessing
         int centerW = CalculateCenterW(measurementRangeY1, measurementRangeY2, widthConvolution, ACTIVE_PIXEL_CHANNEL);
         centerPoint.x = CalculateCenterPointX(centerW, widthConvolution, measurementRangeY2, ACTIVE_PIXEL_CHANNEL);
 
-        Console.WriteLine("x position: " + centerPoint.x);
-        Console.WriteLine("y position: " + centerPoint.y);
-
         bitmap.UnlockBits(bitmapData);
+
         return (bitmap, centerPoint.x, centerPoint.y);
     }
 
@@ -178,12 +187,16 @@ public class BeamProcessing
 
     private static int CalculateCenterW(int measurementRangeY1, int measurementRangeY2, long[] widthConvolution, int activePixelChannel)
     {
-        for (int i = measurementRangeY1 / activePixelChannel; i < measurementRangeY2 / activePixelChannel; i++)
+        int maxIndex = widthConvolution.Length - 1;
+
+        for (int i = measurementRangeY1 / activePixelChannel; i < maxIndex; i++)
         {
-            if (widthConvolution[measurementRangeY2 / activePixelChannel - 1] >= 2 * widthConvolution[i])
+            if (widthConvolution[maxIndex] >= 2 * widthConvolution[i])
                 continue;
+
             return i - 1;
         }
+
         return 1;
     }
 
@@ -193,22 +206,31 @@ public class BeamProcessing
             (float)(heightConvolution[centerH] - heightConvolution[centerH - 1]);
     }
 
-    private static float CalculateCenterPointX(int centerW, long[] widthConvolution, int measurementRangeY2,
-        int activePixelChannel)
-    {
-        return centerW +
-               (widthConvolution[measurementRangeY2 / activePixelChannel - 1] / 2 - widthConvolution[centerW]) /
-               (float)(widthConvolution[centerW] - widthConvolution[centerW - 1]);
-    }
+private static float CalculateCenterPointX(int centerW, long[] widthConvolution, int measurementRangeY2,
+    int activePixelChannel)
+{
+    int maxIndex = widthConvolution.Length - 1;
+
+    if (centerW <= 0 || centerW >= widthConvolution.Length)
+        return centerW;
+
+    return centerW +
+           (widthConvolution[maxIndex] / 2 - widthConvolution[centerW]) /
+           (float)(widthConvolution[centerW] - widthConvolution[centerW - 1]);
+}
+
 
     private static void Calculate2DConvolution(ref long[] heightConv, ref long[] widthConv,
         int[] heightArr, int[] widthArr,
         int x1, int x2, int y1, int y2, int pixelChannel)
     {
-        for (int i = x1 + 1; i < x2; i++)
+        int heightLength = Math.Min(x2, heightConv.Length);
+        for (int i = x1 + 1; i < heightLength; i++)
             heightConv[i] = heightConv[i - 1] + heightArr[i];
 
-        for (int i = y1 / pixelChannel + 1; i < y2 / pixelChannel; i++)
+        int widthMax = Math.Min(y2 / pixelChannel, widthConv.Length);
+        for (int i = y1 / pixelChannel + 1; i < widthMax; i++)
             widthConv[i] = widthConv[i - 1] + widthArr[i];
     }
+
 } 
