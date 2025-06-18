@@ -1,8 +1,7 @@
 using System.Drawing;
 using System.Drawing.Imaging;
-using System.Threading;
-using System.Collections.Generic;
-using System.Linq;
+using LaserStability.Background;
+using LaserStability.Centre;
 
 namespace LaserStability.Utility
 {
@@ -20,7 +19,7 @@ namespace LaserStability.Utility
 
         private static long[] heightConvolution;
         private static long[] widthConvolution;
-        private const int ACTIVE_PIXEL_CHANNEL = 1;
+        private const int ACTIVE_PIXEL_CHANNEL = 3;
 
         private static (float x, float y) centerPoint;
 
@@ -64,9 +63,11 @@ namespace LaserStability.Utility
 
             long[] histogram = GetHistogram(ptrFirstPixel, heightInPixels, widthInBytes, bytesPerPixel);
 
+            long totalPixels = heightInPixels * widthInPixels;
+            int otsuThreshold = BackgroundTreshold.CalculateTreshold(histogram, totalPixels);
+
             Parallel.For(measurementRangeX1, measurementRangeX2, y =>
             {
-                const int INTENSITY_THRESHOLD = 100;
                 int localPixelIntensitySum = 0;
                 int localNumberOfBrightPixels = 0;
                 int maxPixelValueInWidth = 0;
@@ -80,10 +81,11 @@ namespace LaserStability.Utility
                     for (int x = measurementRangeY1; x < measurementRangeY2; x += bytesPerPixel)
                     {
                         int pixelValue = currentLine[x];
-                        if (_backgroundVisible)
-                            pixelValue = RemoveAdaptiveBackgroundLevelFromPixel(x / bytesPerPixel, y, ptrFirstPixel, widthInPixels, heightInPixels, 5);
 
-                        if (pixelValue > INTENSITY_THRESHOLD)
+                        if (_backgroundVisible)
+                            pixelValue = BackgroundTreshold.RemoveAdaptiveBackgroundLevelFromPixel(x / bytesPerPixel, y, ptrFirstPixel, widthInPixels, heightInPixels, 5);
+
+                        if (pixelValue > otsuThreshold)
                         {
                             localPixelIntensitySum += pixelValue;
                             localNumberOfBrightPixels++;
@@ -118,11 +120,11 @@ namespace LaserStability.Utility
             Calculate2DConvolution(ref heightConvolution, ref widthConvolution, height, width,
                 measurementRangeX1, measurementRangeX2, measurementRangeY1, measurementRangeY2, ACTIVE_PIXEL_CHANNEL);
 
-            int centerH = CalculateCenterH(measurementRangeX1, measurementRangeX2, heightConvolution);
-            centerPoint.y = CalculateCenterPointY(centerH, heightConvolution, measurementRangeX2);
+            int centerH = CalculateCentre.CalculateCenterH(measurementRangeX1, measurementRangeX2, heightConvolution);
+            centerPoint.y = CalculateCentre.CalculateCenterPointY(centerH, heightConvolution, measurementRangeX2);
 
-            int centerW = CalculateCenterW(measurementRangeY1, measurementRangeY2, widthConvolution, ACTIVE_PIXEL_CHANNEL);
-            centerPoint.x = CalculateCenterPointX(centerW, widthConvolution, measurementRangeY2, ACTIVE_PIXEL_CHANNEL);
+            int centerW = CalculateCentre.CalculateCenterW(measurementRangeY1, measurementRangeY2, widthConvolution, ACTIVE_PIXEL_CHANNEL);
+            centerPoint.x = CalculateCentre.CalculateCenterPointX(centerW, widthConvolution, measurementRangeY2, ACTIVE_PIXEL_CHANNEL);
 
             bitmap.UnlockBits(bitmapData);
 
@@ -149,76 +151,6 @@ namespace LaserStability.Utility
             return histogram;
         }
 
-        private static unsafe int RemoveAdaptiveBackgroundLevelFromPixel(int x, int y, byte* ptrFirstPixel, int imageWidth, int imageHeight, int windowSize)
-        {
-            int startX = Math.Max(0, x - windowSize);
-            int endX = Math.Min(imageWidth - 1, x + windowSize);
-            int startY = Math.Max(0, y - windowSize);
-            int endY = Math.Min(imageHeight - 1, y + windowSize);
-
-            int pixelCount = 0;
-            long pixelSum = 0;
-
-            for (int i = startX; i <= endX; i++)
-            {
-                for (int j = startY; j <= endY; j++)
-                {
-                    int pixelIndex = j * imageWidth + i;
-                    pixelSum += ptrFirstPixel[pixelIndex];
-                    pixelCount++;
-                }
-            }
-
-            int averageBackground = (int)(pixelSum / pixelCount);
-
-            int pixelValue = ptrFirstPixel[y * imageWidth + x];
-            return Math.Max(0, pixelValue - averageBackground);  
-        }
-
-        private static int CalculateCenterH(int measurementRangeX1, int measurementRangeX2, long[] heightConvolution)
-        {
-            for (int i = measurementRangeX1; i < measurementRangeX2; i++)
-            {
-                if (heightConvolution[measurementRangeX2 - 1] < 2 * heightConvolution[i])
-                    return i - 1;
-            }
-            return 1;
-        }
-
-        private static int CalculateCenterW(int measurementRangeY1, int measurementRangeY2, long[] widthConvolution, int activePixelChannel)
-        {
-            int maxIndex = widthConvolution.Length - 1;
-
-            for (int i = measurementRangeY1 / activePixelChannel; i < maxIndex; i++)
-            {
-                if (widthConvolution[maxIndex] >= 2 * widthConvolution[i])
-                    continue;
-
-                return i - 1;
-            }
-
-            return 1;
-        }
-
-        private static float CalculateCenterPointY(int centerH, long[] heightConvolution, int measurementRangeX2)
-        {
-            return centerH + (heightConvolution[measurementRangeX2 - 1] / 2 - heightConvolution[centerH]) /
-                (float)(heightConvolution[centerH] - heightConvolution[centerH - 1]);
-        }
-
-        private static float CalculateCenterPointX(int centerW, long[] widthConvolution, int measurementRangeY2,
-            int activePixelChannel)
-        {
-            int maxIndex = widthConvolution.Length - 1;
-
-            if (centerW <= 0 || centerW >= widthConvolution.Length)
-                return centerW;
-
-            return centerW +
-                   (widthConvolution[maxIndex] / 2 - widthConvolution[centerW]) /
-                   (float)(widthConvolution[centerW] - widthConvolution[centerW - 1]);
-        }
-
         private static void Calculate2DConvolution(ref long[] heightConv, ref long[] widthConv,
             int[] heightArr, int[] widthArr,
             int x1, int x2, int y1, int y2, int pixelChannel)
@@ -231,5 +163,6 @@ namespace LaserStability.Utility
             for (int i = y1 / pixelChannel + 1; i < widthMax; i++)
                 widthConv[i] = widthConv[i - 1] + widthArr[i];
         }
+
     }
 }
