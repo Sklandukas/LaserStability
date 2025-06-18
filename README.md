@@ -5,4 +5,4 @@
 
 [Finding, removing and finding the centre of the background is done in the Measurement folder:](LaserStability/Measurements/BeamProcessing.cs)
 
-[The stability of the laser beam is assessed by the RMS (Root Mean Square) method, which evaluates how the position of the centre of the laser beam varies around a mean position.](LaserStability/Measurements/RmsCalculator.cs)
+[The stability of the laser beam is assessed by the RMS (Root Mean Square) method, which evaluates how the position of the centre of the laser beam varies around a mean position.](LaserStability/LaserStability/Measurements/RmsCalculator.cs)
