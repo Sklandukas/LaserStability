@@ -13,7 +13,7 @@ using System.Reflection;
 [assembly: System.Reflection.AssemblyCompanyAttribute("LaserStability")]
 [assembly: System.Reflection.AssemblyConfigurationAttribute("Debug")]
 [assembly: System.Reflection.AssemblyFileVersionAttribute("1.0.0.0")]
-[assembly: System.Reflection.AssemblyInformationalVersionAttribute("1.0.0+b1877e096aee775cc93bc2af80ec82e6b29009ef")]
+[assembly: System.Reflection.AssemblyInformationalVersionAttribute("1.0.0+6ff3c310ebaf02f393b5239f5dfee43d637b989b")]
 [assembly: System.Reflection.AssemblyProductAttribute("LaserStability")]
 [assembly: System.Reflection.AssemblyTitleAttribute("LaserStability")]
 [assembly: System.Reflection.AssemblyVersionAttribute("1.0.0.0")]
